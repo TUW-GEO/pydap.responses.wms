@@ -5,9 +5,9 @@ import re
 import operator
 import bisect
 
-from paste.request import construct_url, parse_dict_querystring
-from paste.httpexceptions import HTTPBadRequest
-from paste.util.converters import asbool
+# from paste.request import construct_url, parse_dict_querystring
+# from paste.httpexceptions import HTTPBadRequest
+# from paste.util.converters import asbool
 import numpy as np
 from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
 from matplotlib.figure import Figure
@@ -25,138 +25,96 @@ except:
     PIL = None
 
 from pydap.model import *
+# from pydap.responses.lib import BaseResponse
+# from pydap.util.template import GenshiRenderer, StringLoader, TemplateNotFound
+# from pydap.util.safeeval import expr_eval
+# from pydap.lib import walk, encode_atom
+from jinja2 import Environment, PackageLoader, ChoiceLoader
+from webob import Response
+from webob.dec import wsgify
+from webob.exc import HTTPSeeOther
+from urllib import unquote
+
 from pydap.responses.lib import BaseResponse
-from pydap.util.template import GenshiRenderer, StringLoader, TemplateNotFound
-from pydap.util.safeeval import expr_eval
-from pydap.lib import walk, encode_atom
+from pydap.lib import __version__
 
 
 WMS_ARGUMENTS = ['request', 'bbox', 'cmap', 'layers', 'width', 'height', 'transparent', 'time']
 
 
-DEFAULT_TEMPLATE = """<?xml version='1.0' encoding="UTF-8" standalone="no" ?>
-<!DOCTYPE WMT_MS_Capabilities SYSTEM "http://schemas.opengis.net/wms/1.1.1/WMS_MS_Capabilities.dtd"
- [
- <!ELEMENT VendorSpecificCapabilities EMPTY>
- ]>
-
-<WMT_MS_Capabilities version="1.1.1"
-        xmlns="http://www.opengis.net/wms" 
-        xmlns:py="http://genshi.edgewall.org/"
-        xmlns:xlink="http://www.w3.org/1999/xlink">
-
-<Service>
-  <Name>${dataset.name}</Name>
-  <Title>WMS server for ${dataset.attributes.get('long_name', dataset.name)}</Title>
-  <OnlineResource xlink:href="$location"></OnlineResource>
-</Service>
-
-<Capability>
-  <Request>
-    <GetCapabilities>
-      <Format>application/vnd.ogc.wms_xml</Format>
-      <DCPType>
-        <HTTP>
-          <Get><OnlineResource xlink:href="$location"></OnlineResource></Get>
-        </HTTP>
-      </DCPType>
-    </GetCapabilities>
-    <GetMap>
-      <Format>image/png</Format>
-      <DCPType>
-        <HTTP>
-          <Get><OnlineResource xlink:href="$location"></OnlineResource></Get>
-        </HTTP>
-      </DCPType>
-    </GetMap>
-  </Request>
-  <Exception>
-    <Format>application/vnd.ogc.se_blank</Format>
-  </Exception>
-  <VendorSpecificCapabilities></VendorSpecificCapabilities>
-  <UserDefinedSymbolization SupportSLD="1" UserLayer="0" UserStyle="1" RemoteWFS="0"/>
-  <Layer>
-    <Title>WMS server for ${dataset.attributes.get('long_name', dataset.name)}</Title>
-    <SRS>EPSG:4326</SRS>
-    <LatLonBoundingBox minx="${lon_range[0]}" miny="${lat_range[0]}" maxx="${lon_range[1]}" maxy="${lat_range[1]}"></LatLonBoundingBox>
-    <BoundingBox CRS="EPSG:4326" minx="${lon_range[0]}" miny="${lat_range[0]}" maxx="${lon_range[1]}" maxy="${lat_range[1]}"/>
-    <Layer py:for="grid in layers">
-      <Name>${grid.name}</Name>
-      <Title>${grid.attributes.get('long_name', grid.name)}</Title>
-      <Abstract>${grid.attributes.get('history', '')}</Abstract>
-      <?python
-          import numpy as np
-          from pydap.responses.wms import get_lon, get_lat, get_time
-          lon = get_lon(grid, dataset)
-          lat = get_lat(grid, dataset)
-          time = get_time(grid, dataset)
-          minx, maxx = np.min(lon), np.max(lon)
-          miny, maxy = np.min(lat), np.max(lat)
-      ?>
-      <LatLonBoundingBox minx="${minx}" miny="${miny}" maxx="${maxx}" maxy="${maxy}"></LatLonBoundingBox>
-      <BoundingBox CRS="EPSG:4326" minx="${minx}" miny="${miny}" maxx="${maxx}" maxy="${maxy}"/>
-      <Dimension py:if="time is not None" name="time" units="ISO8601"/>
-      <Extent py:if="time is not None" name="time" default="${time[0].isoformat()}/${time[-1].isoformat()}" nearestValue="0">${time[0].isoformat()}/${time[-1].isoformat()}</Extent>
-    </Layer>
-  </Layer>
-</Capability>
-</WMT_MS_Capabilities>"""
-
-
 class WMSResponse(BaseResponse):
 
     __description__ = "Web Map Service image"
-
-    renderer = GenshiRenderer(
-            options={}, loader=StringLoader( {'capabilities.xml': DEFAULT_TEMPLATE} ))
+    __version__ = __version__
+    
+    __template__ = ""
+# 
+#     renderer = GenshiRenderer(
+#             options={}, loader=StringLoader({'capabilities.xml': DEFAULT_TEMPLATE}))
 
     def __init__(self, dataset):
         BaseResponse.__init__(self, dataset)
-        self.headers.append( ('Content-description', 'dods_wms') )
+        self.headers.append(('Content-description', 'dods_wms'))
+        
+        # our default environment
+        self.loaders = [
+            PackageLoader("pydap.responses.wms", "templates"),
+        ]
 
-    def __call__(self, environ, start_response):
-        # Create a Beaker cache dependent on the query string, since
-        # most (all?) pre-computed values will depend on the specific
-        # dataset. We strip all WMS related arguments since they don't
-        # affect the dataset.
-        query = parse_dict_querystring(environ)
+    @wsgify
+    def __call__(self, req):
+        query = req.GET
         try:
             dap_query = ['%s=%s' % (k, query[k]) for k in query
                     if k.lower() not in WMS_ARGUMENTS]
             dap_query = [pair.rstrip('=') for pair in dap_query]
             dap_query.sort()  # sort for uniqueness
             dap_query = '&'.join(dap_query)
-            location = construct_url(environ,
-                    with_query_string=True,
-                    querystring=dap_query)
-            self.cache = environ['beaker.cache'].get_cache(
+            location = req.path_url + "?" + dap_query
+            self.cache = req.environ['beaker.cache'].get_cache(
                     'pydap.responses.wms+' + location)
         except KeyError:
             self.cache = None
 
+        # check if the server has specified a render environment; if it has,
+        # make a copy and add our loaders to it
+        if "pydap.jinja2.environment" in req.environ:
+            env = req.environ["pydap.jinja2.environment"].overlay()
+            env.loader = ChoiceLoader([
+                loader for loader in [env.loader] + self.loaders if loader])
+        else:
+            env = Environment(loader=ChoiceLoader(self.loaders))
+
+        env.filters["unquote"] = unquote
+        self.__template__ = env.get_template("wms.xml")
+
         # Handle GetMap and GetCapabilities requests
         type_ = query.get('REQUEST', 'GetMap')
+        content = "test123"
         if type_ == 'GetCapabilities':
-            self.serialize = self._get_capabilities(environ)
-            self.headers.append( ('Content-type', 'text/xml') )
-            self.headers.append( ('Access-Control-Allow-Origin', '*') )
+            content = self._get_capabilities(req)
+            self.headers.append(('Content-type', 'text/xml'))
+            self.headers.append(('Access-Control-Allow-Origin', '*'))
         elif type_ == 'GetMap':
-            self.serialize = self._get_map(environ)
-            self.headers.append( ('Content-type', 'image/png') )
+            content = self._get_map(req)
+            self.headers.append(('Content-type', 'image/png'))
         elif type_ == 'GetColorbar':
-            self.serialize = self._get_colorbar(environ)
-            self.headers.append( ('Content-type', 'image/png') )
+            content = self._get_colorbar(req)
+            self.headers.append(('Content-type', 'image/png'))
         else:
-            raise HTTPBadRequest('Invalid REQUEST "%s"' % type_)
+            pass
+            # @TODO Implement Exception
+            # raise HTTPBadRequest('Invalid REQUEST "%s"' % type_)
 
-        return BaseResponse.__call__(self, environ, start_response)
+        return Response(body=content[0], headers=self.headers)
 
-    def _get_colorbar(self, environ):
+    def _get_colorbar(self, req):
         w, h = 90, 300
-        query = parse_dict_querystring(environ)
-        dpi = float(environ.get('pydap.responses.wms.dpi', 80))
-        figsize = w/dpi, h/dpi
-        cmap = query.get('cmap', environ.get('pydap.responses.wms.cmap', 'jet'))
+        query = req.GET
+        
+        dpi = float(req.environ.get('pydap.responses.wms.dpi', 80))
+        figsize = w / dpi, h / dpi
+        cmap = query.get('cmap', req.environ.get('pydap.responses.wms.cmap', 'jet'))
 
         def serialize(dataset):
             fix_map_attributes(dataset)
@@ -179,7 +137,7 @@ class WMSResponse(BaseResponse):
             for tick in cb.ax.get_yticklabels():
                 tick.set_fontsize(14)
                 tick.set_color('white')
-                #tick.set_fontweight('bold')
+                # tick.set_fontweight('bold')
 
             # Save to buffer.
             canvas = FigureCanvas(fig)
@@ -187,7 +145,7 @@ class WMSResponse(BaseResponse):
             canvas.print_png(output)
             if hasattr(dataset, 'close'): dataset.close()
             return [ output.getvalue() ]
-        return serialize
+        return serialize(self.dataset)
 
     def _get_actual_range(self, grid):
         try:
@@ -202,16 +160,17 @@ class WMSResponse(BaseResponse):
                 self.cache.set_value((grid.id, 'actual_range'), actual_range)
         return actual_range
 
-    def _get_map(self, environ):
+    def _get_map(self, req):
         # Calculate appropriate figure size.
-        query = parse_dict_querystring(environ)
-        dpi = float(environ.get('pydap.responses.wms.dpi', 80))
+        query = req.GET
+        
+        dpi = float(req.environ.get('pydap.responses.wms.dpi', 80))
         w = float(query.get('WIDTH', 256))
         h = float(query.get('HEIGHT', 256))
         time = query.get('TIME')
-        figsize = w/dpi, h/dpi
+        figsize = w / dpi, h / dpi
         bbox = [float(v) for v in query.get('BBOX', '-180,-90,180,90').split(',')]
-        cmap = query.get('cmap', environ.get('pydap.responses.wms.cmap', 'jet'))
+        cmap = query.get('cmap', req.environ.get('pydap.responses.wms.cmap', 'jet'))
 
         def serialize(dataset):
             fix_map_attributes(dataset)
@@ -233,12 +192,12 @@ class WMSResponse(BaseResponse):
                     self._plot_grid(dataset, grid, time, bbox, (w, h), ax, cmap)
 
             # Save to buffer.
-            ax.axis( [bbox[0], bbox[2], bbox[1], bbox[3]] )
+            ax.axis([bbox[0], bbox[2], bbox[1], bbox[3]])
             ax.axis('off')
             canvas = FigureCanvas(fig)
             output = StringIO() 
             # Optionally convert to paletted png
-            paletted = asbool(environ.get('pydap.responses.wms.paletted', 'false'))
+            paletted = asbool(req.environ.get('pydap.responses.wms.paletted', 'false'))
             if paletted:
                 # Read image
                 buf, size = canvas.print_to_buffer()
@@ -254,11 +213,11 @@ class WMSResponse(BaseResponse):
                     im = im.convert("RGB")
                     im = im.convert("P", palette=Image.ADAPTIVE, colors=ncolors)
                     # Set all pixel values below ncolors to 1 and the rest to 0
-                    mask = Image.eval(alpha, lambda a: 255 if a <=128 else 0)
+                    mask = Image.eval(alpha, lambda a: 255 if a <= 128 else 0)
                     # Paste the color of index ncolors and use alpha as a mask
                     im.paste(ncolors, mask)
                     # Truncate palette to actual size to save space
-                    im.palette.palette = im.palette.palette[:3*(ncolors+1)]
+                    im.palette.palette = im.palette.palette[:3 * (ncolors + 1)]
                     im.save(output, 'png', optimize=False, transparency=ncolors)
                 else:
                     canvas.print_png(output)
@@ -266,7 +225,7 @@ class WMSResponse(BaseResponse):
                 canvas.print_png(output)
             if hasattr(dataset, 'close'): dataset.close()
             return [ output.getvalue() ]
-        return serialize
+        return serialize(self.dataset)
 
     def _plot_grid(self, dataset, grid, time, bbox, size, ax, cmap='jet'):
         # Get actual data range for levels.
@@ -280,7 +239,7 @@ class WMSResponse(BaseResponse):
 
             tokens = time.split(',')
             for token in tokens:
-                if '/' in token: # range
+                if '/' in token:  # range
                     start, end = token.strip().split('/')
                     start = iso8601.parse_date(start, default_timezone=None)
                     end = iso8601.parse_date(end, default_timezone=None)
@@ -307,17 +266,17 @@ class WMSResponse(BaseResponse):
             if len(lon.shape) == 1:
                 i0, i1 = find_containing_bounds(lon, bbox[0], bbox[2])
                 j0, j1 = find_containing_bounds(lat, bbox[1], bbox[3])
-                istep = max(1, np.floor( (len(lon) * (bbox[2]-bbox[0])) / (w * abs(lon[-1]-lon[0])) ))
-                jstep = max(1, np.floor( (len(lat) * (bbox[3]-bbox[1])) / (h * abs(lat[-1]-lat[0])) ))
+                istep = int(max(1, np.floor((len(lon) * (bbox[2] - bbox[0])) / (w * abs(lon[-1] - lon[0])))))
+                jstep = int(max(1, np.floor((len(lat) * (bbox[3] - bbox[1])) / (h * abs(lat[-1] - lat[0])))))
                 lons = lon[i0:i1:istep]
                 lats = lat[j0:j1:jstep]
-                data = np.asarray(grid.array[...,j0:j1:jstep,i0:i1:istep])
+                data = np.asarray(grid.array[..., j0:j1:jstep, i0:i1:istep])
 
                 # Fix cyclic data.
                 if cyclic:
                     lons = np.ma.concatenate((lons, lon[0:1] + 360.0), 0)
                     data = np.ma.concatenate((
-                        data, grid.array[...,j0:j1:jstep,0:1]), -1)
+                        data, grid.array[..., j0:j1:jstep, 0:1]), -1)
 
                 X, Y = np.meshgrid(lons, lats)
 
@@ -333,12 +292,12 @@ class WMSResponse(BaseResponse):
 
                 i0, i1 = np.min(I[xcond]), np.max(I[xcond])
                 j0, j1 = np.min(J[ycond]), np.max(J[ycond])
-                istep = max(1, int(np.floor( (lon.shape[1] * (bbox[2]-bbox[0])) / (w * abs(np.max(lon)-np.amin(lon))) )))
-                jstep = max(1, int(np.floor( (lon.shape[0] * (bbox[3]-bbox[1])) / (h * abs(np.max(lat)-np.amin(lat))) )))
+                istep = max(1, int(np.floor((lon.shape[1] * (bbox[2] - bbox[0])) / (w * abs(np.max(lon) - np.amin(lon))))))
+                jstep = max(1, int(np.floor((lon.shape[0] * (bbox[3] - bbox[1])) / (h * abs(np.max(lat) - np.amin(lat))))))
 
-                X = lon[j0:j1:jstep,i0:i1:istep]
-                Y = lat[j0:j1:jstep,i0:i1:istep]
-                data = grid.array[...,j0:j1:jstep,i0:i1:istep]
+                X = lon[j0:j1:jstep, i0:i1:istep]
+                Y = lat[j0:j1:jstep, i0:i1:istep]
+                data = grid.array[..., j0:j1:jstep, i0:i1:istep]
 
             # Plot data.
             if data.shape: 
@@ -354,11 +313,11 @@ class WMSResponse(BaseResponse):
                     ax.contourf(X, Y, data, V, cmap=get_cmap(cmap))
             lon += 360.0
 
-    def _get_capabilities(self, environ):
+    def _get_capabilities(self, req):
         def serialize(dataset):
             fix_map_attributes(dataset)
             grids = [grid for grid in walk(dataset, GridType) if is_valid(grid, dataset)]
-
+    
             # Set global lon/lat ranges.
             try:
                 lon_range = self.cache.get_value('lon_range')
@@ -386,34 +345,35 @@ class WMSResponse(BaseResponse):
                         lat_range[1] = max(lat_range[1], np.max(lat))
                 if self.cache:
                     self.cache.set_value('lat_range', lat_range)
-
+    
             # Remove ``REQUEST=GetCapabilites`` from query string.
-            location = construct_url(environ, with_query_string=True)
+            location = req.url
             base = location.split('REQUEST=')[0].rstrip('?&')
-
+            
+            # Get layer bboxes
+            layer_info_dict = {}
+            for grid in grids:
+                g_lon = list(get_lon(grid, dataset))
+                g_lat = list(get_lat(grid, dataset))
+                time = get_time(grid, dataset)
+                minx, maxx = np.min(g_lon), np.max(g_lon)
+                miny, maxy = np.min(g_lat), np.max(g_lat)
+                layer_inf = {'time': time, 'minx': minx, 'maxx': maxx, 'miny': miny, 'maxy': maxy}
+                layer_info_dict[grid._id] = layer_inf
+    
             context = {
                     'dataset': dataset,
                     'location': base,
                     'layers': grids,
                     'lon_range': lon_range,
                     'lat_range': lat_range,
+                    'layer_info': layer_info_dict
                     }
-            # Load the template using the specified renderer, or fallback to the 
-            # default template since most of the people won't bother installing
-            # and/or creating a capabilities template -- this guarantees that the
-            # response will work out of the box.
-            try:
-                renderer = environ['pydap.renderer']
-                template = renderer.loader('capabilities.xml')
-            except (KeyError, TemplateNotFound):
-                renderer = self.renderer
-                template = renderer.loader('capabilities.xml')
-
-            output = renderer.render(template, context, output_format='text/xml')
+    
+            output = self.__template__.render(context)
             if hasattr(dataset, 'close'): dataset.close()
             return [output.encode('utf-8')]
-        return serialize
-
+        return serialize(self.dataset)
 
 def is_valid(grid, dataset):
     return (get_lon(grid, dataset) is not None and 
@@ -485,13 +445,13 @@ def fix_data(data, attrs):
     if attrs.get('add_offset'): data += attrs['add_offset']
 
     while len(data.shape) > 2:
-        ##data = data[0]
+        # #data = data[0]
         data = np.ma.mean(data, 0)
     return data
 
 
 def fix_map_attributes(dataset):
-    for grid in walk(dataset, GridType):
+    for grid in walk(dataset, GridType):  # @TODO: Get all variables of type GridType from dataset
         for map_ in grid.maps.values():
             if not map_.attributes and map_.name in dataset:
                 map_.attributes = dataset[map_.name].attributes.copy()
@@ -557,8 +517,31 @@ def find_containing_bounds(axis, v0, v1):
     i0 = i1 = len(axis)
     for i, value in enumerate(axis):
         if value > v0 and i0 == len(axis):
-            i0 = i-1
+            i0 = i - 1
         if not v1 > value and i1 == len(axis):
-            i1 = i+1
-    if not ascending: i0, i1 = len(axis)-i1, len(axis)-i0
+            i1 = i + 1
+    if not ascending: i0, i1 = len(axis) - i1, len(axis) - i0
     return max(0, i0), min(len(axis), i1)
+
+def walk(var, type_=object):
+    """
+    Yield all variables of a given type from a dataset.
+    The iterator returns also the parent variable.
+    """
+    if isinstance(var, type_):
+        yield var
+    if isinstance(var, StructureType):
+        for child in var._dict:
+            for subvar in walk(var._dict[child], type_):
+                yield subvar
+
+def asbool(obj):
+    if isinstance(obj, (str, unicode)):
+        obj = obj.strip().lower()
+        if obj in ['true', 'yes', 'on', 'y', 't', '1']:
+            return True
+        elif obj in ['false', 'no', 'off', 'n', 'f', '0']:
+            return False
+        else:
+            raise ValueError("String is not true/false: %r" % obj)
+    return bool(obj)

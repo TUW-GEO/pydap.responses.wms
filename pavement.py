@@ -5,7 +5,7 @@ from paver.setuputils import *
 import paver.doctools
 from paver.release import setup_meta
 
-__version__ = (0,5,4)
+__version__ = (0, 5, 4)
 
 options = environment.options
 setup(**setup_meta)
@@ -51,7 +51,7 @@ scratch. This response enables Pydap to serve data as a WMS server.
 
         dependency_links=[],
         install_requires=[
-            'Pydap==3.1',
+            'Pydap==3.2',
             'Paste',
             'matplotlib',
             'coards',

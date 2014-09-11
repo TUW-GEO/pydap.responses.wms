@@ -90,23 +90,24 @@ class WMSResponse(BaseResponse):
 
         # Handle GetMap and GetCapabilities requests
         type_ = query.get('REQUEST', 'GetMap')
-        content = "test123"
+        content = ""
         if type_ == 'GetCapabilities':
-            content = self._get_capabilities(req)
+            content = self._get_capabilities(req)[0]
             self.headers.append(('Content-type', 'text/xml'))
             self.headers.append(('Access-Control-Allow-Origin', '*'))
         elif type_ == 'GetMap':
-            content = self._get_map(req)
+            content = self._get_map(req)[0]
             self.headers.append(('Content-type', 'image/png'))
         elif type_ == 'GetColorbar':
-            content = self._get_colorbar(req)
+            content = self._get_colorbar(req)[0]
             self.headers.append(('Content-type', 'image/png'))
         else:
-            pass
+            content = "Invalid REQUEST: " + str(type_)
+            self.headers.append(('Content-type', 'text/html'))
             # @TODO Implement Exception
             # raise HTTPBadRequest('Invalid REQUEST "%s"' % type_)
 
-        return Response(body=content[0], headers=self.headers)
+        return Response(body=content, headers=self.headers)
 
     def _get_colorbar(self, req):
         w, h = 90, 300

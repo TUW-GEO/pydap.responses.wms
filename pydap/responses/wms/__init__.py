@@ -156,7 +156,7 @@ class WMSResponse(BaseResponse):
                 actual_range = grid.attributes['actual_range']
             except KeyError:
                 data = fix_data(np.asarray(grid.array[:]), grid.attributes)
-                actual_range = np.min(data), np.max(data)
+                actual_range = np.nanmin(data), np.nanmax(data)
             if self.cache:
                 self.cache.set_value((grid.id, 'actual_range'), actual_range)
         return actual_range
@@ -271,7 +271,8 @@ class WMSResponse(BaseResponse):
                 jstep = int(max(1, np.floor((len(lat) * (bbox[3] - bbox[1])) / (h * abs(lat[-1] - lat[0])))))
                 lons = lon[i0:i1:istep]
                 lats = lat[j0:j1:jstep]
-                data = np.asarray(grid.array[..., j0:j1:jstep, i0:i1:istep])
+                data = np.asarray(grid.array[..., j0:j1:1, i0:i1:1])
+                data = data[::jstep, ::istep]
 
                 # Fix cyclic data.
                 if cyclic:

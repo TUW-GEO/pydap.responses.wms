@@ -257,7 +257,7 @@ class WMSResponse(BaseResponse):
         cyclic = hasattr(lon, 'modulo')
         lon = np.asarray(lon[:])
         lat = np.asarray(get_lat(grid, dataset)[:])
-        while np.min(lon) > bbox[0]:
+        while np.min(lon) > bbox[0] and np.min(lon) > 0:
             lon -= 360.0
         # Now we plot the data window until the end of the bbox:
         w, h = size
@@ -272,7 +272,7 @@ class WMSResponse(BaseResponse):
                 lons = lon[i0:i1:istep]
                 lats = lat[j0:j1:jstep]
                 data = np.asarray(grid.array[..., j0:j1:1, i0:i1:1])
-                data = data[::jstep, ::istep]
+                data = data[..., ::jstep, ::istep]
 
                 # Fix cyclic data.
                 if cyclic:
@@ -311,8 +311,11 @@ class WMSResponse(BaseResponse):
                 data = fix_data(data, grid.attributes)
 
                 # plot
-                if data.any():
-                    ax.contourf(X, Y, data, V, cmap=get_cmap(cmap))
+#                 if data.any():
+                # ax.contourf(X, Y, data, V, cmap=get_cmap(cmap))
+                ax.imshow(data, extent=(X[0, 0], X[0, X.shape[1] - 1], Y[Y.shape[0] - 1, 0], Y[0, 0]),
+                          vmin=actual_range[0], vmax=actual_range[1], cmap=get_cmap(cmap),
+                          interpolation='none')
             lon += 360.0
 
     def _get_capabilities(self, req):

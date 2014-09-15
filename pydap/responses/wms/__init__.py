@@ -267,18 +267,35 @@ class WMSResponse(BaseResponse):
             if len(lon.shape) == 1:
                 i0, i1 = find_containing_bounds(lon, bbox[0], bbox[2])
                 j0, j1 = find_containing_bounds(lat, bbox[1], bbox[3])
+                istep_float = float((len(lon) * (bbox[2] - bbox[0])) / (w * abs(lon[-1] - lon[0])))
+                jstep_float = float((len(lat) * (bbox[3] - bbox[1])) / (h * abs(lat[-1] - lat[0])))
+                izoom = float(1) / istep_float
+                jzoom = float(1) / jstep_float
+                zoom = int(izoom)
+                if jzoom > izoom:
+                    zoom = int(jzoom)
                 istep = int(max(1, np.floor((len(lon) * (bbox[2] - bbox[0])) / (w * abs(lon[-1] - lon[0])))))
                 jstep = int(max(1, np.floor((len(lat) * (bbox[3] - bbox[1])) / (h * abs(lat[-1] - lat[0])))))
                 lons = lon[i0:i1:istep]
                 lats = lat[j0:j1:jstep]
                 data = np.asarray(grid.array[..., j0:j1:1, i0:i1:1])
+                import scipy.ndimage.interpolation as interp
+                if zoom > 4:
+                    if len(data.shape) == 2:
+                        zoom = (zoom, zoom)
+                    elif len(data.shape) == 3:
+                        zoom = (1, zoom, zoom)
+                        
+                    data = interp.zoom(data, zoom, order=0)
+                else:
+                    zoom = int(1)
                 data = data[..., ::jstep, ::istep]
 
                 # Fix cyclic data.
                 if cyclic:
                     lons = np.ma.concatenate((lons, lon[0:1] + 360.0), 0)
                     data = np.ma.concatenate((
-                        data, grid.array[..., j0:j1:jstep, 0:1]), -1)
+                        data, interp.zoom(grid.array[..., j0:j1:jstep, 0:1], zoom, order=0)), -1)
 
                 X, Y = np.meshgrid(lons, lats)
 
@@ -433,7 +450,7 @@ def get_time(grid, dataset):
     for dim in grid.maps.values():
         if ' since ' in dim.attributes.get('units', ''):
             try:
-                return [coards.parse(value, dim.units) for value in np.asarray(dim)]
+                return [coards.parse(value, dim.attributes.get('units')) for value in np.asarray(dim.data)]
             except:
                 pass
 

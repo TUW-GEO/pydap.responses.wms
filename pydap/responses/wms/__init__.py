@@ -121,7 +121,7 @@ class WMSResponse(BaseResponse):
             fix_map_attributes(dataset)
             fig = Figure(figsize=figsize, dpi=dpi)
             fig.figurePatch.set_alpha(0.0)
-            ax = fig.add_axes([0.05, 0.05, 0.45, 0.85])
+            ax = fig.add_axes([0.05, 0.05, 0.35, 0.85])
             ax.axesPatch.set_alpha(0.5)
 
             # Plot requested grids.
@@ -132,11 +132,15 @@ class WMSResponse(BaseResponse):
             grid = reduce(operator.getitem, names)
 
             actual_range = self._get_actual_range(grid)
+            fontsize = 14
+            if actual_range[1] > 999:
+                fontsize = 12
             norm = Normalize(vmin=actual_range[0], vmax=actual_range[1])
             cb = ColorbarBase(ax, cmap=get_cmap(cmap), norm=norm,
                     orientation='vertical')
+            cb.set_label(self._get_units(grid))
             for tick in cb.ax.get_yticklabels():
-                tick.set_fontsize(14)
+                tick.set_fontsize(fontsize)
                 tick.set_color('white')
                 # tick.set_fontweight('bold')
 
@@ -147,6 +151,18 @@ class WMSResponse(BaseResponse):
             if hasattr(dataset, 'close'): dataset.close()
             return [ output.getvalue() ]
         return serialize(self.dataset)
+
+    def _get_units(self, grid):
+        try:
+            units = self.cache.get_value((grid.id, 'units'))
+        except (KeyError, AttributeError):
+            try:
+                units = grid.attributes['units']
+            except KeyError:
+                units = ""
+            if self.cache:
+                self.cache.set_value((grid.id, 'units'), units)
+        return units
 
     def _get_actual_range(self, grid):
         try:
@@ -160,6 +176,19 @@ class WMSResponse(BaseResponse):
             if self.cache:
                 self.cache.set_value((grid.id, 'actual_range'), actual_range)
         return actual_range
+    
+    def _get_valid_range(self, grid):
+        try:
+            valid_range = self.cache.get_value((grid.id, 'valid_range'))
+        except (KeyError, AttributeError):
+            try:
+                valid_range = grid.attributes['valid_range']
+            except KeyError:
+                data = fix_data(np.asarray(grid.array[:]), grid.attributes)
+                valid_range = np.nanmin(data), np.nanmax(data)
+            if self.cache:
+                self.cache.set_value((grid.id, 'valid_range'), valid_range)
+        return valid_range
 
     def _get_map(self, req):
         # Calculate appropriate figure size.
@@ -278,6 +307,7 @@ class WMSResponse(BaseResponse):
                 jstep = int(max(1, np.floor((len(lat) * (bbox[3] - bbox[1])) / (h * abs(lat[-1] - lat[0])))))
                 lons = lon[i0:i1:istep]
                 lats = lat[j0:j1:jstep]
+
                 data = np.asarray(grid.array[..., j0:j1:1, i0:i1:1])
                 import scipy.ndimage.interpolation as interp
                 if zoom > 4:
@@ -329,7 +359,8 @@ class WMSResponse(BaseResponse):
 
                 # plot
 #                 if data.any():
-                # ax.contourf(X, Y, data, V, cmap=get_cmap(cmap))
+#                ax.contourf(X, Y, data, V, cmap=get_cmap(cmap))
+                
                 ax.imshow(data, extent=(X[0, 0], X[0, X.shape[1] - 1], Y[Y.shape[0] - 1, 0], Y[0, 0]),
                           vmin=actual_range[0], vmax=actual_range[1], cmap=get_cmap(cmap),
                           interpolation='none')
@@ -463,7 +494,7 @@ def fix_data(data, attrs):
     elif '_FillValue' in attrs:
         data = np.ma.masked_equal(data, attrs['_FillValue'])
 
-    if attrs.get('scale_factor'): data *= attrs['scale_factor']
+    if attrs.get('scale_factor'): data = data * float(attrs['scale_factor'])
     if attrs.get('add_offset'): data += attrs['add_offset']
 
     while len(data.shape) > 2:

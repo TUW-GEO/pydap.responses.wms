@@ -4,14 +4,13 @@
  <!ELEMENT VendorSpecificCapabilities EMPTY>
  ]>
 
-<WMT_MS_Capabilities version="1.1.1"
-        xmlns="http://www.opengis.net/wms" 
-        xmlns:xlink="http://www.w3.org/1999/xlink">
+<WMT_MS_Capabilities version="1.1.1">
 
 <Service>
   <Name>{{ dataset.name }}</Name>
   <Title>WMS server for {{ dataset.attributes.get('long_name', dataset.name) }}</Title>
-  <OnlineResource xlink:href="{{ location }}"></OnlineResource>
+  <Abstract> </Abstract>
+  <OnlineResource xmlns:xlink="http://www.w3.org/1999/xlink" xlink:type="simple" xlink:href="{{ location }}"/>
 </Service>
 
 <Capability>
@@ -20,7 +19,11 @@
       <Format>application/vnd.ogc.wms_xml</Format>
       <DCPType>
         <HTTP>
-          <Get><OnlineResource xlink:href="{{ location }}"></OnlineResource></Get>
+          <Get>
+	    <OnlineResource xmlns:xlink="http://www.w3.org/1999/xlink"
+             xlink:type="simple"
+             xlink:href="{{ location }}"/>
+          </Get>
         </HTTP>
       </DCPType>
     </GetCapabilities>
@@ -28,7 +31,11 @@
       <Format>image/png</Format>
       <DCPType>
         <HTTP>
-          <Get><OnlineResource xlink:href="{{ location }}"></OnlineResource></Get>
+          <Get>
+	    <OnlineResource xmlns:xlink="http://www.w3.org/1999/xlink"
+             xlink:type="simple"
+             xlink:href="{{ location }}"/>
+          </Get>
         </HTTP>
       </DCPType>
     </GetMap>
@@ -42,17 +49,17 @@
     <Title>WMS server for {{ dataset.attributes.get('long_name', dataset.name) }}</Title>
     <SRS>EPSG:4326</SRS>
     <LatLonBoundingBox minx="{{ lon_range[0] }}" miny="{{ lat_range[0] }}" maxx="{{ lon_range[1] }}" maxy="{{ lat_range[1] }}"></LatLonBoundingBox>
-    <BoundingBox CRS="EPSG:4326" minx="{{ lon_range[0] }}" miny="{{ lat_range[0] }}" maxx="{{ lon_range[1] }}" maxy="{{ lat_range[1] }}"/>
+    <BoundingBox SRS="EPSG:4326" minx="{{ lon_range[0] }}" miny="{{ lat_range[0] }}" maxx="{{ lon_range[1] }}" maxy="{{ lat_range[1] }}"/>
     {% for grid in layers %}
     <Layer>
       <Name>{{ grid.name }}</Name>
       <Title>{{ grid.attributes.get('long_name', grid.name) }}</Title>
       <Abstract>{{ grid.attributes.get('history', '') }}</Abstract>
       <LatLonBoundingBox minx="{{ layer_info[grid._id]['minx'] }}" miny="{{ layer_info[grid._id]['miny'] }}" maxx="{{ layer_info[grid._id]['maxx'] }}" maxy="{{ layer_info[grid._id]['maxy'] }}"></LatLonBoundingBox>
-      <BoundingBox CRS="EPSG:4326" minx="{{ layer_info[grid._id]['minx'] }}" miny="{{ layer_info[grid._id]['miny'] }}" maxx="{{ layer_info[grid._id]['maxx'] }}" maxy="{{ layer_info[grid._id]['maxy'] }}"/>
+      <BoundingBox SRS="EPSG:4326" minx="{{ layer_info[grid._id]['minx'] }}" miny="{{ layer_info[grid._id]['miny'] }}" maxx="{{ layer_info[grid._id]['maxx'] }}" maxy="{{ layer_info[grid._id]['maxy'] }}"/>
       {% if layer_info[grid._id]['time'] is defined and layer_info[grid._id]['time'] is not none %}      
           <Dimension name="time" units="ISO8601"/>
-          <Extent name="time" default="{{ layer_info[grid._id]['time'][0].isoformat() }}/{{ layer_info[grid._id]['time'][-1].isoformat() }}" nearestValue="0">{{ layer_info[grid._id]['time'][0].isoformat() }}/{{ layer_info[grid._id]['time'][-1].isoformat() }}</Extent>
+          <Extent name="time" default="{{ layer_info[grid._id]['time'][0].isoformat() }}" nearestValue="0">{% for time in layer_info[grid._id]['time'] %}{% if layer_info[grid._id]['time'][0] != time %},{% endif %}{{ time.isoformat() }}{% endfor %}</Extent>
       {% endif %}
     </Layer>
     {% endfor %}

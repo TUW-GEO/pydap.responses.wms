@@ -159,7 +159,10 @@ class WMSResponse(BaseResponse):
             try:
                 units = grid.attributes['units']
             except KeyError:
-                units = ""
+                try:
+                    units = grid.attributes['unit']
+                except KeyError:
+                    units = ""
             if self.cache:
                 self.cache.set_value((grid.id, 'units'), units)
         return units

@@ -110,7 +110,7 @@ class WMSResponse(BaseResponse):
         return Response(body=content, headers=self.headers)
 
     def _get_colorbar(self, req):
-        w, h = 90, 300
+        w, h = 300, 70
         query = req.GET
         
         dpi = float(req.environ.get('pydap.responses.wms.dpi', 80))
@@ -121,7 +121,7 @@ class WMSResponse(BaseResponse):
             fix_map_attributes(dataset)
             fig = Figure(figsize=figsize, dpi=dpi)
             fig.figurePatch.set_alpha(0.0)
-            ax = fig.add_axes([0.05, 0.05, 0.35, 0.85])
+            ax = fig.add_axes([0.05, 0.50, 0.90, 0.45])
             ax.axesPatch.set_alpha(0.5)
 
             # Plot requested grids.
@@ -137,7 +137,7 @@ class WMSResponse(BaseResponse):
                 fontsize = 12
             norm = Normalize(vmin=actual_range[0], vmax=actual_range[1])
             cb = ColorbarBase(ax, cmap=get_cmap(cmap), norm=norm,
-                    orientation='vertical')
+                    orientation='horizontal')
             cb.set_label(self._get_units(grid))
             for tick in cb.ax.get_yticklabels():
                 tick.set_fontsize(fontsize)
@@ -311,7 +311,37 @@ class WMSResponse(BaseResponse):
                 lons = lon[i0:i1:istep]
                 lats = lat[j0:j1:jstep]
 
-                data = np.asarray(grid.array[..., j0:j1:1, i0:i1:1])
+                # get order of dimensions
+                try:
+                    time_i = np.where(l)[0][0]
+                except:
+                    time_i = Ellipsis
+                lat_i = slice(j0, j1, 1)
+                lon_i = slice(i0, i1, 1)
+                gridarr_dim = []
+                datastep = []
+                flip = False
+                for dim in grid.dimensions:
+                    if dim.lower() == 'time':
+                        gridarr_dim.append(time_i)
+                    elif (dim.lower() == 'lon' or dim.lower() == 'longitude' or dim.lower() == 'coadsx'):
+                        gridarr_dim.append(lon_i)
+                        flip = False
+                        datastep.append(istep)
+                    elif (dim.lower() == 'lat' or dim.lower() == 'latitude' or dim.lower() == 'coadsy'):
+                        gridarr_dim.append(lat_i)
+                        datastep.append(jstep)
+                        flip = True  # flip if latitude is second spatial dimension
+
+                # apply time slices
+                if l is not None:
+                    data = np.asarray(grid.array[gridarr_dim[0], gridarr_dim[1], gridarr_dim[2]])
+                else:
+                    data = np.asarray(grid.array[..., gridarr_dim[0], gridarr_dim[1]])
+                    if flip:
+                        data = np.fliplr(np.rot90(data, 3))
+                    
+                
                 import scipy.ndimage.interpolation as interp
                 if zoom > 4:
                     if len(data.shape) == 2:
@@ -322,7 +352,7 @@ class WMSResponse(BaseResponse):
                     data = interp.zoom(data, zoom, order=0)
                 else:
                     zoom = int(1)
-                data = data[..., ::jstep, ::istep]
+                data = data[..., ::datastep[0], ::datastep[1]]
 
                 # Fix cyclic data.
                 if cyclic:
@@ -350,12 +380,15 @@ class WMSResponse(BaseResponse):
                 X = lon[j0:j1:jstep, i0:i1:istep]
                 Y = lat[j0:j1:jstep, i0:i1:istep]
                 data = grid.array[..., j0:j1:jstep, i0:i1:istep]
+                
+                # apply time slices
+                if l is not None:
+                    data = np.asarray(grid.array[np.where(l)[0][0], j0:j1:1, i0:i1:1])
+                else:
+                    data = np.asarray(grid.array[..., j0:j1:1, i0:i1:1])
 
             # Plot data.
             if data.shape: 
-                # apply time slices
-                if l is not None:
-                    data = np.asarray(data)[l]
 
                 # reduce dimensions and mask missing_values
                 data = fix_data(data, grid.attributes)

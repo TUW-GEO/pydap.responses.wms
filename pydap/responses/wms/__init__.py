@@ -264,7 +264,7 @@ class WMSResponse(BaseResponse):
         # Get actual data range for levels.
         actual_range = self._get_actual_range(grid)
         V = np.linspace(actual_range[0], actual_range[1], 10)
-
+        extent = (0, 0, 0, 0)
         # Slice according to time request (WMS-T).
         if time is not None:
             values = np.array(get_time(grid, dataset))
@@ -338,8 +338,6 @@ class WMSResponse(BaseResponse):
                     data = np.asarray(grid.array[gridarr_dim[0], gridarr_dim[1], gridarr_dim[2]])
                 else:
                     data = np.asarray(grid.array[..., gridarr_dim[0], gridarr_dim[1]])
-                    if flip:
-                        data = np.fliplr(np.rot90(data, 3))
                     
                 
                 import scipy.ndimage.interpolation as interp
@@ -357,11 +355,27 @@ class WMSResponse(BaseResponse):
                 # Fix cyclic data.
                 if cyclic:
                     lons = np.ma.concatenate((lons, lon[0:1] + 360.0), 0)
-                    data = np.ma.concatenate((
-                        data, interp.zoom(grid.array[..., j0:j1:jstep, 0:1], zoom, order=0)), -1)
+                    
+                    if l is not None:
+                        if flip:
+                            gridarr_dim[1] = slice(0, 1, 1)
+                        else:
+                            gridarr_dim[2] = slice(0, 1, 1)
+                        data = np.ma.concatenate((
+                                  data, interp.zoom(grid.array[gridarr_dim[0], gridarr_dim[1], gridarr_dim[2]], zoom, order=0)), -1)
+                    else:
+                        if flip:
+                            gridarr_dim[0] = slice(0, 1, 1)
+                        else:
+                            gridarr_dim[1] = slice(0, 1, 1)
+                        data = np.ma.concatenate((
+                                  data, interp.zoom(grid.array[..., gridarr_dim[0], gridarr_dim[1]], zoom, order=0)), -1)
 
+                # Flip if dimension order is changed
+                if flip:
+                        data = np.fliplr(np.rot90(data, 3))
                 X, Y = np.meshgrid(lons, lats)
-
+                extent = (X[0, 0], X[0, X.shape[1] - 1], Y[Y.shape[0] - 1, 0], Y[0, 0])
             elif len(lon.shape) == 2:
                 i, j = np.arange(lon.shape[1]), np.arange(lon.shape[0])
                 I, J = np.meshgrid(i, j)
@@ -386,18 +400,15 @@ class WMSResponse(BaseResponse):
                     data = np.asarray(grid.array[np.where(l)[0][0], j0:j1:1, i0:i1:1])
                 else:
                     data = np.asarray(grid.array[..., j0:j1:1, i0:i1:1])
+                
+                extent = (X[0, 0], X[X.shape[0] - 1, 0], Y[0, Y.shape[1] - 1], Y[0, 0])
 
             # Plot data.
             if data.shape: 
-
                 # reduce dimensions and mask missing_values
                 data = fix_data(data, grid.attributes)
-
-                # plot
-#                 if data.any():
-#                ax.contourf(X, Y, data, V, cmap=get_cmap(cmap))
                 
-                ax.imshow(data, extent=(X[0, 0], X[0, X.shape[1] - 1], Y[Y.shape[0] - 1, 0], Y[0, 0]),
+                ax.imshow(data, extent=extent,
                           vmin=actual_range[0], vmax=actual_range[1], cmap=get_cmap(cmap),
                           interpolation='none')
             lon += 360.0

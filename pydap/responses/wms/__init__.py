@@ -324,6 +324,7 @@ class WMSResponse(BaseResponse):
                 for dim in grid.dimensions:
                     if dim.lower() == 'time':
                         gridarr_dim.append(time_i)
+                        # datastep.append(Ellipsis)
                     elif (dim.lower() == 'lon' or dim.lower() == 'longitude' or dim.lower() == 'coadsx'):
                         gridarr_dim.append(lon_i)
                         flip = False
@@ -332,12 +333,14 @@ class WMSResponse(BaseResponse):
                         gridarr_dim.append(lat_i)
                         datastep.append(jstep)
                         flip = True  # flip if latitude is second spatial dimension
+                    else:
+                        gridarr_dim.append(Ellipsis)
+                        
+                if len(gridarr_dim) < 3:
+                    gridarr_dim.append(Ellipsis)
 
-                # apply time slices
-                if l is not None:
-                    data = np.asarray(grid.array[gridarr_dim[0], gridarr_dim[1], gridarr_dim[2]])
-                else:
-                    data = np.asarray(grid.array[..., gridarr_dim[0], gridarr_dim[1]])
+
+                data = np.asarray(grid.array[gridarr_dim[0], gridarr_dim[1], gridarr_dim[2]])
                     
                 
                 import scipy.ndimage.interpolation as interp
@@ -350,6 +353,8 @@ class WMSResponse(BaseResponse):
                     data = interp.zoom(data, zoom, order=0)
                 else:
                     zoom = int(1)
+                    
+                # @TODO: data[datastep[0], datastep[1], datastep[2]]
                 data = data[..., ::datastep[0], ::datastep[1]]
 
                 # Fix cyclic data.

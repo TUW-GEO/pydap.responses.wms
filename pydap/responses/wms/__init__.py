@@ -11,7 +11,6 @@ import bisect
 import numpy as np
 from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
 from matplotlib.figure import Figure
-from matplotlib.cm import get_cmap
 from matplotlib.colorbar import ColorbarBase
 from matplotlib.colors import Normalize
 from matplotlib import rcParams
@@ -35,8 +34,11 @@ from webob.dec import wsgify
 from webob.exc import HTTPSeeOther
 from urllib import unquote
 
+from pandas import *
+
 from pydap.responses.lib import BaseResponse
 from pydap.lib import __version__
+from pydap.responses.wms.load_cmap import load as get_cmap
 
 
 WMS_ARGUMENTS = ['request', 'bbox', 'cmap', 'layers', 'width', 'height', 'transparent', 'time']
@@ -46,16 +48,16 @@ class WMSResponse(BaseResponse):
 
     __description__ = "Web Map Service image"
     __version__ = __version__
-    
+
     __template__ = ""
-# 
+#
 #     renderer = GenshiRenderer(
 #             options={}, loader=StringLoader({'capabilities.xml': DEFAULT_TEMPLATE}))
 
     def __init__(self, dataset):
         BaseResponse.__init__(self, dataset)
         self.headers.append(('Content-description', 'dods_wms'))
-        
+
         # our default environment
         self.loaders = [
             PackageLoader("pydap.responses.wms", "templates"),
@@ -83,7 +85,7 @@ class WMSResponse(BaseResponse):
             env.loader = ChoiceLoader([
                 loader for loader in [env.loader] + self.loaders if loader])
         else:
-            env = Environment(loader=ChoiceLoader(self.loaders))
+            env = Environment(loader = ChoiceLoader(self.loaders))
 
         env.filters["unquote"] = unquote
         self.__template__ = env.get_template("wms.xml")
@@ -101,25 +103,88 @@ class WMSResponse(BaseResponse):
         elif type_ == 'GetColorbar':
             content = self._get_colorbar(req)[0]
             self.headers.append(('Content-type', 'image/png'))
+        elif type_ == 'GetTimeseries':
+            content = self._get_timeseries(req)[0]
+            self.headers.append(('Content-type', 'text/html'))
         else:
             content = "Invalid REQUEST: " + str(type_)
             self.headers.append(('Content-type', 'text/html'))
             # @TODO Implement Exception
             # raise HTTPBadRequest('Invalid REQUEST "%s"' % type_)
 
-        return Response(body=content, headers=self.headers)
+        return Response(body = content, headers = self.headers)
+
+    def _get_timeseries(self, req):
+        query = req.GET
+
+        def serialize(dataset):
+            fix_map_attributes(dataset)
+
+            bbox = [float(v) for v in query.get('BBOX', '0,0,0,0').split(',')]
+            layers = [layer for layer in query.get('LAYERS', '').split(',')
+                    if layer] or [var.id for var in walk(dataset, GridType)]
+            layer = layers[0]
+            names = [dataset] + layer.split('.')
+            grid = reduce(operator.getitem, names)
+
+            lon = np.asarray(get_lon(grid, dataset)[:])
+            lat = np.asarray(get_lat(grid, dataset)[:])
+            i0, i1 = find_containing_bounds(lon, bbox[0], bbox[2])
+            j0, j1 = find_containing_bounds(lat, bbox[1], bbox[3])
+            lons = lon[i0:i1:1]
+            lats = lat[j0:j1:1]
+
+            # get order of dimensions
+            time_i = slice(None)
+            lat_i = slice(j0, j1, 1)
+            lon_i = slice(i0, i1, 1)
+            gridarr_dim = []
+            flip = False
+            for dim in grid.dimensions:
+                if dim.lower() == 'time':
+                    gridarr_dim.append(time_i)
+                elif (dim.lower() == 'lon' or dim.lower() == 'longitude' or dim.lower() == 'coadsx'):
+                    gridarr_dim.append(lon_i)
+                    flip = False
+                elif (dim.lower() == 'lat' or dim.lower() == 'latitude' or dim.lower() == 'coadsy'):
+                    gridarr_dim.append(lat_i)
+                else:
+                    gridarr_dim.append(Ellipsis)
+
+            if len(gridarr_dim) < 3:
+                gridarr_dim.append(Ellipsis)
+
+            data = np.asarray(grid.array[gridarr_dim[0], gridarr_dim[1], gridarr_dim[2]])
+            timeelements = data.shape[0]
+            if 'missing_value' in grid.attributes:
+                data = np.ma.masked_equal(data, grid.attributes['missing_value'])
+            elif '_FillValue' in grid.attributes:
+                data = np.ma.masked_equal(data, grid.attributes['_FillValue'])
+
+            if grid.attributes.get('scale_factor'): data = data * float(grid.attributes['scale_factor'])
+            if grid.attributes.get('add_offset'): data += grid.attributes['add_offset']
+
+            ts = []
+            for i in range(timeelements):  # Only allows time in 1st dimension
+                ts.append(np.nanmean(data[i]))
+            d = {names[0]: ts}
+            index = get_time(grid, dataset)
+            df = DataFrame(d, index = index)
+            if hasattr(dataset, 'close'): dataset.close()
+            return [df.to_string()]
+        return serialize(self.dataset)
 
     def _get_colorbar(self, req):
         w, h = 300, 70
         query = req.GET
-        
+
         dpi = float(req.environ.get('pydap.responses.wms.dpi', 80))
         figsize = w / dpi, h / dpi
         cmap = query.get('cmap', req.environ.get('pydap.responses.wms.cmap', 'jet'))
 
         def serialize(dataset):
             fix_map_attributes(dataset)
-            fig = Figure(figsize=figsize, dpi=dpi)
+            fig = Figure(figsize = figsize, dpi = dpi)
             fig.figurePatch.set_alpha(0.0)
             ax = fig.add_axes([0.05, 0.50, 0.90, 0.45])
             ax.axesPatch.set_alpha(0.5)
@@ -135,9 +200,9 @@ class WMSResponse(BaseResponse):
             fontsize = 14
             if actual_range[1] > 999:
                 fontsize = 12
-            norm = Normalize(vmin=actual_range[0], vmax=actual_range[1])
-            cb = ColorbarBase(ax, cmap=get_cmap(cmap), norm=norm,
-                    orientation='horizontal')
+            norm = Normalize(vmin = actual_range[0], vmax = actual_range[1])
+            cb = ColorbarBase(ax, cmap = get_cmap(cmap), norm = norm,
+                    orientation = 'horizontal')
             cb.set_label(self._get_units(grid))
             for tick in cb.ax.get_yticklabels():
                 tick.set_fontsize(fontsize)
@@ -146,7 +211,7 @@ class WMSResponse(BaseResponse):
 
             # Save to buffer.
             canvas = FigureCanvas(fig)
-            output = StringIO() 
+            output = StringIO()
             canvas.print_png(output)
             if hasattr(dataset, 'close'): dataset.close()
             return [ output.getvalue() ]
@@ -154,7 +219,7 @@ class WMSResponse(BaseResponse):
 
     def _get_units(self, grid):
         try:
-            units = self.cache.get_value((grid.id, 'units'))
+            units = self.cache.get_value(str((grid.id, 'units')))
         except (KeyError, AttributeError):
             try:
                 units = grid.attributes['units']
@@ -164,12 +229,12 @@ class WMSResponse(BaseResponse):
                 except KeyError:
                     units = ""
             if self.cache:
-                self.cache.set_value((grid.id, 'units'), units)
+                self.cache.set_value(str((grid.id, 'units')), units)
         return units
 
     def _get_actual_range(self, grid):
         try:
-            actual_range = self.cache.get_value((grid.id, 'actual_range'))
+            actual_range = self.cache.get_value(str((grid.id, 'actual_range')))
         except (KeyError, AttributeError):
             try:
                 actual_range = grid.attributes['actual_range']
@@ -177,12 +242,12 @@ class WMSResponse(BaseResponse):
                 data = fix_data(np.asarray(grid.array[:]), grid.attributes)
                 actual_range = np.nanmin(data), np.nanmax(data)
             if self.cache:
-                self.cache.set_value((grid.id, 'actual_range'), actual_range)
+                self.cache.set_value(str((grid.id, 'actual_range')), actual_range)
         return actual_range
-    
+
     def _get_valid_range(self, grid):
         try:
-            valid_range = self.cache.get_value((grid.id, 'valid_range'))
+            valid_range = self.cache.get_value(str((grid.id, 'valid_range')))
         except (KeyError, AttributeError):
             try:
                 valid_range = grid.attributes['valid_range']
@@ -190,13 +255,13 @@ class WMSResponse(BaseResponse):
                 data = fix_data(np.asarray(grid.array[:]), grid.attributes)
                 valid_range = np.nanmin(data), np.nanmax(data)
             if self.cache:
-                self.cache.set_value((grid.id, 'valid_range'), valid_range)
+                self.cache.set_value(str((grid.id, 'valid_range')), valid_range)
         return valid_range
 
     def _get_map(self, req):
         # Calculate appropriate figure size.
         query = req.GET
-        
+
         dpi = float(req.environ.get('pydap.responses.wms.dpi', 80))
         w = float(query.get('WIDTH', 256))
         h = float(query.get('HEIGHT', 256))
@@ -207,14 +272,14 @@ class WMSResponse(BaseResponse):
 
         def serialize(dataset):
             fix_map_attributes(dataset)
-            fig = Figure(figsize=figsize, dpi=dpi)
+            fig = Figure(figsize = figsize, dpi = dpi)
             ax = fig.add_axes([0.0, 0.0, 1.0, 1.0])
 
             # Set transparent background; found through http://sparkplot.org/browser/sparkplot.py.
             if asbool(query.get('TRANSPARENT', 'true')):
                 fig.figurePatch.set_alpha(0.0)
                 ax.axesPatch.set_alpha(0.0)
-            
+
             # Plot requested grids (or all if none requested).
             layers = [layer for layer in query.get('LAYERS', '').split(',')
                     if layer] or [var.id for var in walk(dataset, GridType)]
@@ -228,7 +293,7 @@ class WMSResponse(BaseResponse):
             ax.axis([bbox[0], bbox[2], bbox[1], bbox[3]])
             ax.axis('off')
             canvas = FigureCanvas(fig)
-            output = StringIO() 
+            output = StringIO()
             # Optionally convert to paletted png
             paletted = asbool(req.environ.get('pydap.responses.wms.paletted', 'false'))
             if paletted:
@@ -244,14 +309,14 @@ class WMSResponse(BaseResponse):
                     alpha = im.split()[-1]
                     # Convert to paletted image
                     im = im.convert("RGB")
-                    im = im.convert("P", palette=Image.ADAPTIVE, colors=ncolors)
+                    im = im.convert("P", palette = Image.ADAPTIVE, colors = ncolors)
                     # Set all pixel values below ncolors to 1 and the rest to 0
                     mask = Image.eval(alpha, lambda a: 255 if a <= 128 else 0)
                     # Paste the color of index ncolors and use alpha as a mask
                     im.paste(ncolors, mask)
                     # Truncate palette to actual size to save space
                     im.palette.palette = im.palette.palette[:3 * (ncolors + 1)]
-                    im.save(output, 'png', optimize=False, transparency=ncolors)
+                    im.save(output, 'png', optimize = False, transparency = ncolors)
                 else:
                     canvas.print_png(output)
             else:
@@ -260,7 +325,7 @@ class WMSResponse(BaseResponse):
             return [ output.getvalue() ]
         return serialize(self.dataset)
 
-    def _plot_grid(self, dataset, grid, time, bbox, size, ax, cmap='jet'):
+    def _plot_grid(self, dataset, grid, time, bbox, size, ax, cmap = 'jet'):
         # Get actual data range for levels.
         actual_range = self._get_actual_range(grid)
         V = np.linspace(actual_range[0], actual_range[1], 10)
@@ -274,11 +339,11 @@ class WMSResponse(BaseResponse):
             for token in tokens:
                 if '/' in token:  # range
                     start, end = token.strip().split('/')
-                    start = iso8601.parse_date(start, default_timezone=None)
-                    end = iso8601.parse_date(end, default_timezone=None)
+                    start = iso8601.parse_date(start, default_timezone = None)
+                    end = iso8601.parse_date(end, default_timezone = None)
                     l[(values >= start) & (values <= end)] = True
                 else:
-                    instant = iso8601.parse_date(token.strip().rstrip('Z'), default_timezone=None)
+                    instant = iso8601.parse_date(token.strip().rstrip('Z'), default_timezone = None)
                     l[values == instant] = True
         else:
             l = None
@@ -294,7 +359,7 @@ class WMSResponse(BaseResponse):
         # Now we plot the data window until the end of the bbox:
         w, h = size
         while np.min(lon) < bbox[2]:
-            # Retrieve only the data for the request bbox, and at the 
+            # Retrieve only the data for the request bbox, and at the
             # optimal resolution (avoiding oversampling).
             if len(lon.shape) == 1:
                 i0, i1 = find_containing_bounds(lon, bbox[0], bbox[2])
@@ -315,7 +380,7 @@ class WMSResponse(BaseResponse):
                 try:
                     time_i = np.where(l)[0][0]
                 except:
-                    time_i = Ellipsis
+                    time_i = slice(None)
                 lat_i = slice(j0, j1, 1)
                 lon_i = slice(i0, i1, 1)
                 gridarr_dim = []
@@ -324,7 +389,7 @@ class WMSResponse(BaseResponse):
                 for dim in grid.dimensions:
                     if dim.lower() == 'time':
                         gridarr_dim.append(time_i)
-                        # datastep.append(Ellipsis)
+                        datastep.append(1)
                     elif (dim.lower() == 'lon' or dim.lower() == 'longitude' or dim.lower() == 'coadsx'):
                         gridarr_dim.append(lon_i)
                         flip = False
@@ -335,46 +400,46 @@ class WMSResponse(BaseResponse):
                         flip = True  # flip if latitude is second spatial dimension
                     else:
                         gridarr_dim.append(Ellipsis)
-                        
+
                 if len(gridarr_dim) < 3:
                     gridarr_dim.append(Ellipsis)
 
-
                 data = np.asarray(grid.array[gridarr_dim[0], gridarr_dim[1], gridarr_dim[2]])
-                    
-                
+
                 import scipy.ndimage.interpolation as interp
                 if zoom > 4:
                     if len(data.shape) == 2:
                         zoom = (zoom, zoom)
                     elif len(data.shape) == 3:
                         zoom = (1, zoom, zoom)
-                        
-                    data = interp.zoom(data, zoom, order=0)
+
+                    data = interp.zoom(data, zoom, order = 0)
                 else:
                     zoom = int(1)
-                    
-                # @TODO: data[datastep[0], datastep[1], datastep[2]]
-                data = data[..., ::datastep[0], ::datastep[1]]
+
+                if len(datastep) < 3:
+                    data = data[::datastep[0], ::datastep[1]]
+                else:
+                    data = data[::datastep[0], ::datastep[1], ::datastep[2]]
 
                 # Fix cyclic data.
                 if cyclic:
                     lons = np.ma.concatenate((lons, lon[0:1] + 360.0), 0)
-                    
+
                     if l is not None:
                         if flip:
                             gridarr_dim[1] = slice(0, 1, 1)
                         else:
                             gridarr_dim[2] = slice(0, 1, 1)
                         data = np.ma.concatenate((
-                                  data, interp.zoom(grid.array[gridarr_dim[0], gridarr_dim[1], gridarr_dim[2]], zoom, order=0)), -1)
+                                  data, interp.zoom(grid.array[gridarr_dim[0], gridarr_dim[1], gridarr_dim[2]], zoom, order = 0)), -1)
                     else:
                         if flip:
                             gridarr_dim[0] = slice(0, 1, 1)
                         else:
                             gridarr_dim[1] = slice(0, 1, 1)
                         data = np.ma.concatenate((
-                                  data, interp.zoom(grid.array[..., gridarr_dim[0], gridarr_dim[1]], zoom, order=0)), -1)
+                                  data, interp.zoom(grid.array[..., gridarr_dim[0], gridarr_dim[1]], zoom, order = 0)), -1)
 
                 # Flip if dimension order is changed
                 if flip:
@@ -399,30 +464,30 @@ class WMSResponse(BaseResponse):
                 X = lon[j0:j1:jstep, i0:i1:istep]
                 Y = lat[j0:j1:jstep, i0:i1:istep]
                 data = grid.array[..., j0:j1:jstep, i0:i1:istep]
-                
+
                 # apply time slices
                 if l is not None:
                     data = np.asarray(grid.array[np.where(l)[0][0], j0:j1:1, i0:i1:1])
                 else:
                     data = np.asarray(grid.array[..., j0:j1:1, i0:i1:1])
-                
+
                 extent = (X[0, 0], X[X.shape[0] - 1, 0], Y[0, Y.shape[1] - 1], Y[0, 0])
 
             # Plot data.
-            if data.shape: 
+            if data.shape:
                 # reduce dimensions and mask missing_values
                 data = fix_data(data, grid.attributes)
-                
-                ax.imshow(data, extent=extent,
-                          vmin=actual_range[0], vmax=actual_range[1], cmap=get_cmap(cmap),
-                          interpolation='none')
+
+                ax.imshow(data, extent = extent,
+                          vmin = actual_range[0], vmax = actual_range[1], cmap = get_cmap(cmap),
+                          interpolation = 'none')
             lon += 360.0
 
     def _get_capabilities(self, req):
         def serialize(dataset):
             fix_map_attributes(dataset)
             grids = [grid for grid in walk(dataset, GridType) if is_valid(grid, dataset)]
-    
+
             # Set global lon/lat ranges.
             try:
                 lon_range = self.cache.get_value('lon_range')
@@ -450,11 +515,11 @@ class WMSResponse(BaseResponse):
                         lat_range[1] = max(lat_range[1], np.max(lat))
                 if self.cache:
                     self.cache.set_value('lat_range', lat_range)
-    
+
             # Remove ``REQUEST=GetCapabilites`` from query string.
             location = req.url
             base = location.split('REQUEST=')[0].rstrip('?&')
-            
+
             # Get layer bboxes
             layer_info_dict = {}
             for grid in grids:
@@ -465,7 +530,7 @@ class WMSResponse(BaseResponse):
                 miny, maxy = np.min(g_lat), np.max(g_lat)
                 layer_inf = {'time': time, 'minx': minx, 'maxx': maxx, 'miny': miny, 'maxy': maxy}
                 layer_info_dict[grid._id] = layer_inf
-    
+
             context = {
                     'dataset': dataset,
                     'location': base,
@@ -474,14 +539,14 @@ class WMSResponse(BaseResponse):
                     'lat_range': lat_range,
                     'layer_info': layer_info_dict
                     }
-    
+
             output = self.__template__.render(context)
             if hasattr(dataset, 'close'): dataset.close()
             return [output.encode('utf-8')]
         return serialize(self.dataset)
 
 def is_valid(grid, dataset):
-    return (get_lon(grid, dataset) is not None and 
+    return (get_lon(grid, dataset) is not None and
             get_lat(grid, dataset) is not None)
 
 
@@ -628,7 +693,7 @@ def find_containing_bounds(axis, v0, v1):
     if not ascending: i0, i1 = len(axis) - i1, len(axis) - i0
     return max(0, i0), min(len(axis), i1)
 
-def walk(var, type_=object):
+def walk(var, type_ = object):
     """
     Yield all variables of a given type from a dataset.
     The iterator returns also the parent variable.

@@ -18,6 +18,8 @@ rcParams['xtick.labelsize'] = 'small'
 rcParams['ytick.labelsize'] = 'small'
 import iso8601
 import coards
+import json
+
 try:
     from PIL import Image
 except:
@@ -34,7 +36,20 @@ from webob.dec import wsgify
 from webob.exc import HTTPSeeOther
 from urllib import unquote
 
-from pandas import *
+import pandas as pd
+
+def to_dygraph_format(self):
+    labels = ['date']
+    labels.extend(self.columns.values.tolist())
+    data_values = np.hsplit(self.values, self.columns.values.size)
+    data_index = self.index.values.astype('M8[s]').tolist()
+    data_index = [x.strftime("%Y/%m/%d %H:%M:%S") for x in data_index]
+    data_index = np.reshape(data_index, (len(data_index), 1))
+    data_values.insert(0, data_index)
+    data_values = np.column_stack(data_values)
+    return labels, data_values.tolist()
+
+pd.DataFrame.to_dygraph_format = to_dygraph_format
 
 from pydap.responses.lib import BaseResponse
 from pydap.lib import __version__
@@ -104,8 +119,8 @@ class WMSResponse(BaseResponse):
             content = self._get_colorbar(req)[0]
             self.headers.append(('Content-type', 'image/png'))
         elif type_ == 'GetTimeseries':
-            content = self._get_timeseries(req)[0]
-            self.headers.append(('Content-type', 'text/html'))
+            content = self._get_timeseries(req)
+            self.headers.append(('Content-type', 'application/json'))
         else:
             content = "Invalid REQUEST: " + str(type_)
             self.headers.append(('Content-type', 'text/html'))
@@ -140,8 +155,10 @@ class WMSResponse(BaseResponse):
             lon_i = slice(i0, i1, 1)
             gridarr_dim = []
             flip = False
+            hastime = False
             for dim in grid.dimensions:
                 if dim.lower() == 'time':
+                    hastime = True
                     gridarr_dim.append(time_i)
                 elif (dim.lower() == 'lon' or dim.lower() == 'longitude' or dim.lower() == 'coadsx'):
                     gridarr_dim.append(lon_i)
@@ -155,7 +172,10 @@ class WMSResponse(BaseResponse):
                 gridarr_dim.append(Ellipsis)
 
             data = np.asarray(grid.array[gridarr_dim[0], gridarr_dim[1], gridarr_dim[2]])
-            timeelements = data.shape[0]
+            if hastime:
+                timeelements = data.shape[0]
+            else:
+                timeelements = 0
             if 'missing_value' in grid.attributes:
                 data = np.ma.masked_equal(data, grid.attributes['missing_value'])
             elif '_FillValue' in grid.attributes:
@@ -167,11 +187,13 @@ class WMSResponse(BaseResponse):
             ts = []
             for i in range(timeelements):  # Only allows time in 1st dimension
                 ts.append(np.nanmean(data[i]))
-            d = {names[0]: ts}
+            d = {layer: ts}
             index = get_time(grid, dataset)
-            df = DataFrame(d, index = index)
-            if hasattr(dataset, 'close'): dataset.close()
-            return [df.to_string()]
+            df = pd.DataFrame(d, index = index)
+            if hasattr(dataset, 'close'):
+                dataset.close()
+            labels, values = df.to_dygraph_format()
+            return json.dumps({'labels':[l.encode('utf-8') for l in labels], 'data': values})
         return serialize(self.dataset)
 
     def _get_colorbar(self, req):

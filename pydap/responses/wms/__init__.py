@@ -191,7 +191,9 @@ class WMSResponse(BaseResponse):
                 data += grid.attributes['add_offset']
 
             # Only allows time in 1st dimension
-            ts = np.nanmean(data, axis=(1, 2))
+            ts = data
+            while len(ts.shape) > 1:
+                ts = np.nanmean(ts, axis=1)
             d = {layer: ts}
             index = get_time(grid, dataset)
             df = pd.DataFrame(d, index=index)

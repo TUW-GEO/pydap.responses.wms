@@ -102,7 +102,7 @@ class WMSResponse(BaseResponse):
             env.loader = ChoiceLoader([
                 loader for loader in [env.loader] + self.loaders if loader])
         else:
-            env = Environment(loader=ChoiceLoader(self.loaders))
+            env = Environment(loader = ChoiceLoader(self.loaders))
 
         env.filters["unquote"] = unquote
         self.__template__ = env.get_template("wms.xml")
@@ -129,7 +129,7 @@ class WMSResponse(BaseResponse):
             # @TODO Implement Exception
             # raise HTTPBadRequest('Invalid REQUEST "%s"' % type_)
 
-        return Response(body=content, headers=self.headers)
+        return Response(body = content, headers = self.headers)
 
     def _get_timeseries(self, req):
         query = req.GET
@@ -193,10 +193,10 @@ class WMSResponse(BaseResponse):
             # Only allows time in 1st dimension
             ts = data
             while len(ts.shape) > 1:
-                ts = np.nanmean(ts, axis=1)
+                ts = np.nanmean(ts, axis = 1)
             d = {layer: ts}
             index = get_time(grid, dataset)
-            df = pd.DataFrame(d, index=index)
+            df = pd.DataFrame(d, index = index)
             if hasattr(dataset, 'close'):
                 dataset.close()
             labels, values = df.to_dygraph_format()
@@ -214,7 +214,7 @@ class WMSResponse(BaseResponse):
 
         def serialize(dataset):
             fix_map_attributes(dataset)
-            fig = Figure(figsize=figsize, dpi=dpi)
+            fig = Figure(figsize = figsize, dpi = dpi)
             fig.figurePatch.set_alpha(0.0)
             ax = fig.add_axes([0.05, 0.50, 0.90, 0.45])
             ax.axesPatch.set_alpha(0.5)
@@ -226,13 +226,13 @@ class WMSResponse(BaseResponse):
             names = [dataset] + layer.split('.')
             grid = reduce(operator.getitem, names)
 
-            actual_range = self._get_actual_range(grid)
+            actual_range, range_guest = self._get_actual_range(grid)
             fontsize = 14
             if actual_range[1] > 999:
                 fontsize = 12
-            norm = Normalize(vmin=actual_range[0], vmax=actual_range[1])
-            cb = ColorbarBase(ax, cmap=get_cmap(cmap), norm=norm,
-                              orientation='horizontal')
+            norm = Normalize(vmin = actual_range[0], vmax = actual_range[1])
+            cb = ColorbarBase(ax, cmap = get_cmap(cmap), norm = norm,
+                              orientation = 'horizontal')
             cb.set_label(self._get_units(grid))
             for tick in cb.ax.get_yticklabels():
                 tick.set_fontsize(fontsize)
@@ -273,12 +273,21 @@ class WMSResponse(BaseResponse):
                 try:
                     actual_range = grid.attributes['valid_range']
                 except KeyError:
-                    data = fix_data(np.asarray(grid.array[:]), grid.attributes)
-                    actual_range = np.nanmin(data), np.nanmax(data)
+                    return [0, 1], True  # return here ... don't cache
+                    # data = fix_data(np.asarray(grid.array[:]), grid.attributes)
+                    # actual_range = np.nanmin(data), np.nanmax(data)
+            # Try to parse float
+            try:
+                actual_range = [float(actual_range[0]), float(actual_range[1])]
+            except (ValueError):
+                return [0, 1], True  # return here ... don't cache
+
+            # Cache actual range if beaker is active
             if self.cache:
                 self.cache.set_value(
                     str((grid.id, 'actual_range')), actual_range)
-        return actual_range
+
+        return actual_range, False
 
     def _get_valid_range(self, grid):
         try:
@@ -310,7 +319,7 @@ class WMSResponse(BaseResponse):
 
         def serialize(dataset):
             fix_map_attributes(dataset)
-            fig = Figure(figsize=figsize, dpi=dpi)
+            fig = Figure(figsize = figsize, dpi = dpi)
             ax = fig.add_axes([0.0, 0.0, 1.0, 1.0])
 
             # Set transparent background; found through
@@ -351,7 +360,7 @@ class WMSResponse(BaseResponse):
                     # Convert to paletted image
                     im = im.convert("RGB")
                     im = im.convert(
-                        "P", palette=Image.ADAPTIVE, colors=ncolors)
+                        "P", palette = Image.ADAPTIVE, colors = ncolors)
                     # Set all pixel values below ncolors to 1 and the rest to 0
                     mask = Image.eval(alpha, lambda a: 255 if a <= 128 else 0)
                     # Paste the color of index ncolors and use alpha as a mask
@@ -359,7 +368,7 @@ class WMSResponse(BaseResponse):
                     # Truncate palette to actual size to save space
                     im.palette.palette = im.palette.palette[:3 * (ncolors + 1)]
                     im.save(
-                        output, 'png', optimize=False, transparency=ncolors)
+                        output, 'png', optimize = False, transparency = ncolors)
                 else:
                     canvas.print_png(output)
             else:
@@ -369,9 +378,9 @@ class WMSResponse(BaseResponse):
             return [output.getvalue()]
         return serialize(self.dataset)
 
-    def _plot_grid(self, dataset, grid, time, bbox, size, ax, cmap='jet'):
+    def _plot_grid(self, dataset, grid, time, bbox, size, ax, cmap = 'jet'):
         # Get actual data range for levels.
-        actual_range = self._get_actual_range(grid)
+        actual_range, range_guest = self._get_actual_range(grid)
         V = np.linspace(actual_range[0], actual_range[1], 10)
         extent = (0, 0, 0, 0)
         # Slice according to time request (WMS-T).
@@ -383,12 +392,12 @@ class WMSResponse(BaseResponse):
             for token in tokens:
                 if '/' in token:  # range
                     start, end = token.strip().split('/')
-                    start = iso8601.parse_date(start, default_timezone=None)
-                    end = iso8601.parse_date(end, default_timezone=None)
+                    start = iso8601.parse_date(start, default_timezone = None)
+                    end = iso8601.parse_date(end, default_timezone = None)
                     l[(values >= start) & (values <= end)] = True
                 else:
                     instant = iso8601.parse_date(
-                        token.strip().rstrip('Z'), default_timezone=None)
+                        token.strip().rstrip('Z'), default_timezone = None)
                     l[values == instant] = True
         else:
             l = None
@@ -464,7 +473,7 @@ class WMSResponse(BaseResponse):
                     elif len(data.shape) == 3:
                         zoom = (1, zoom, zoom)
 
-                    data = interp.zoom(data, zoom, order=0)
+                    data = interp.zoom(data, zoom, order = 0)
                 else:
                     zoom = int(1)
 
@@ -483,14 +492,14 @@ class WMSResponse(BaseResponse):
                         else:
                             gridarr_dim[2] = slice(0, 1, 1)
                         data = np.ma.concatenate((
-                            data, interp.zoom(grid.array[gridarr_dim[0], gridarr_dim[1], gridarr_dim[2]], zoom, order=0)), -1)
+                            data, interp.zoom(grid.array[gridarr_dim[0], gridarr_dim[1], gridarr_dim[2]], zoom, order = 0)), -1)
                     else:
                         if flip:
                             gridarr_dim[0] = slice(0, 1, 1)
                         else:
                             gridarr_dim[1] = slice(0, 1, 1)
                         data = np.ma.concatenate((
-                            data, interp.zoom(grid.array[..., gridarr_dim[0], gridarr_dim[1]], zoom, order=0)), -1)
+                            data, interp.zoom(grid.array[..., gridarr_dim[0], gridarr_dim[1]], zoom, order = 0)), -1)
 
                 # Flip if dimension order is changed
                 if flip:
@@ -534,10 +543,10 @@ class WMSResponse(BaseResponse):
                 # reduce dimensions and mask missing_values
                 data = fix_data(data, grid.attributes)
 
-                ax.imshow(data, extent=extent,
-                          vmin=actual_range[0], vmax=actual_range[
-                              1], cmap=get_cmap(cmap),
-                          interpolation='none')
+                ax.imshow(data, extent = extent,
+                          vmin = actual_range[0], vmax = actual_range[
+                              1], cmap = get_cmap(cmap),
+                          interpolation = 'none')
             lon += 360.0
 
     def _get_capabilities(self, req):
@@ -586,8 +595,12 @@ class WMSResponse(BaseResponse):
                 time = get_time(grid, dataset)
                 minx, maxx = np.min(g_lon), np.max(g_lon)
                 miny, maxy = np.min(g_lat), np.max(g_lat)
+
+                # Get actual data range for levels.
+                actual_range, range_guest = self._get_actual_range(grid)
+
                 layer_inf = {
-                    'time': time, 'minx': minx, 'maxx': maxx, 'miny': miny, 'maxy': maxy}
+                    'time': time, 'minx': minx, 'maxx': maxx, 'miny': miny, 'maxy': maxy, 'actual_range': actual_range, 'range_guest': range_guest}
                 layer_info_dict[grid._id] = layer_inf
 
             context = {
@@ -760,7 +773,7 @@ def find_containing_bounds(axis, v0, v1):
     return max(0, i0), min(len(axis), i1)
 
 
-def walk(var, type_=object):
+def walk(var, type_ = object):
     """
     Yield all variables of a given type from a dataset.
     The iterator returns also the parent variable.

@@ -226,7 +226,7 @@ class WMSResponse(BaseResponse):
             names = [dataset] + layer.split('.')
             grid = reduce(operator.getitem, names)
 
-            actual_range, range_guest = self._get_actual_range(grid)
+            actual_range, range_guess = self._get_actual_range(grid)
             fontsize = 14
             if actual_range[1] > 999:
                 fontsize = 12
@@ -380,7 +380,7 @@ class WMSResponse(BaseResponse):
 
     def _plot_grid(self, dataset, grid, time, bbox, size, ax, cmap = 'jet'):
         # Get actual data range for levels.
-        actual_range, range_guest = self._get_actual_range(grid)
+        actual_range, range_guess = self._get_actual_range(grid)
         V = np.linspace(actual_range[0], actual_range[1], 10)
         extent = (0, 0, 0, 0)
         # Slice according to time request (WMS-T).
@@ -597,10 +597,10 @@ class WMSResponse(BaseResponse):
                 miny, maxy = np.min(g_lat), np.max(g_lat)
 
                 # Get actual data range for levels.
-                actual_range, range_guest = self._get_actual_range(grid)
+                actual_range, range_guess = self._get_actual_range(grid)
 
                 layer_inf = {
-                    'time': time, 'minx': minx, 'maxx': maxx, 'miny': miny, 'maxy': maxy, 'actual_range': actual_range, 'range_guest': range_guest}
+                    'time': time, 'minx': minx, 'maxx': maxx, 'miny': miny, 'maxy': maxy, 'actual_range': actual_range, 'range_guess': range_guess}
                 layer_info_dict[grid._id] = layer_inf
 
             context = {

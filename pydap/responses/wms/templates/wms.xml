@@ -61,6 +61,9 @@
           <Dimension name="time" units="ISO8601"/>
           <Extent name="time" default="{{ layer_info[grid._id]['time'][0].isoformat() }}" nearestValue="0">{% for time in layer_info[grid._id]['time'] %}{% if layer_info[grid._id]['time'][0] != time %},{% endif %}{{ time.isoformat() }}{% endfor %}</Extent>
       {% endif %}
+      {% if layer_info[grid._id]['actual_range'] is defined and layer_info[grid._id]['actual_range'] is not none %}
+          <ActualRange min="{{ layer_info[grid._id]['actual_range'][0] }}" max="{{ layer_info[grid._id]['actual_range'][1] }}" {% if layer_info[grid._id]['range_guess'] is defined and layer_info[grid._id]['range_guess'] == True %}guess="true"{% endif %}/>
+      {% endif %}
     </Layer>
     {% endfor %}
   </Layer>
